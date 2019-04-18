@@ -11,6 +11,7 @@ IRCMessage::IRCMessage()
 
 IRCMessage::IRCMessage(const std::string &toNick, const std::string &msg)
 {
+	printf("toNick=%s msg=%s\n", toNick.c_str(), msg.c_str());
 	command = "PRIVMSG";
 	numParams = 2;
 	params.push_back(toNick);
