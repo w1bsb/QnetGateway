@@ -29,7 +29,7 @@ bool CQnetDB::Open(const char *name)
 		fprintf(stderr, "CQnetDB::Open: can't open %s\n", name);
 		return true;
 	}
-	auto rval = sqlite3_busy_timeout(db, 1000);
+	auto rval = sqlite3_busy_timeout(db, 60000);
 	if (SQLITE_OK != rval)
 	{
 		fprintf(stderr, "sqlite3_busy_timeout returned %d\n", rval);
@@ -41,8 +41,29 @@ bool CQnetDB::Open(const char *name)
 bool CQnetDB::Init()
 {
 	char *eMsg;
+	std::string sql;
 
-	std::string sql("CREATE TABLE IF NOT EXISTS LHEARD("
+	/* Create sequence table */
+	sql.assign("CREATE TABLE IF NOT EXISTS SEQUENCE(seq INT NOT NULL);");
+
+	if (SQLITE_OK != sqlite3_exec(db, sql.c_str(), NULL, 0, &eMsg))
+	{
+		fprintf(stderr, "CQnetDB::Init [%s] error: %s\n", sql.c_str(), eMsg);
+		sqlite3_free(eMsg);
+		return true;
+	}
+
+	/* Populate it with current time if empty */
+	sql.assign("INSERT INTO SEQUENCE (seq) SELECT STRFTIME('%s','now') WHERE NOT EXISTS (SELECT 1 FROM sequence);");
+
+	if (SQLITE_OK != sqlite3_exec(db, sql.c_str(), NULL, 0, &eMsg))
+	{
+		fprintf(stderr, "CQnetDB::Init [%s] error: %s\n", sql.c_str(), eMsg);
+		sqlite3_free(eMsg);
+		return true;
+	}
+
+	sql.assign("CREATE TABLE IF NOT EXISTS LHEARD("
 					"callsign	TEXT PRIMARY KEY, "
 					"sfx		TEXT DEFAULT '    ', "
 					"message    TEXT DEFAULT '                    ', "
@@ -119,11 +140,11 @@ bool CQnetDB::UpdateLH(const char *callsign, const char *sfx, const char module,
 
 	if (count)
 	{
-		sql << "UPDATE LHEARD SET sfx = '" << sfx << "', module = '" << module << "', reflector = '" << reflector << "', lasttime = strftime('%s','now') WHERE callsign = '" << callsign << "';";
+		sql << "UPDATE LHEARD SET sfx = '" << sfx << "', module = '" << module << "', reflector = '" << reflector << "', lasttime = strftime('%s','now') WHERE callsign = '" << callsign << "'; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
 	}
 	else
 	{
-		sql << "INSERT INTO LHEARD (callsign, sfx, module, reflector, lasttime) VALUES ('" << callsign << "', '" << sfx << "', '" << module << "', '" << reflector << "', strftime('%s','now'));";
+		sql << "INSERT INTO LHEARD (callsign, sfx, module, reflector, lasttime) VALUES ('" << callsign << "', '" << sfx << "', '" << module << "', '" << reflector << "', strftime('%s','now')); UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
 	}
 
 	if (SQLITE_OK != sqlite3_exec(db, sql.str().c_str(), NULL, 0, &eMsg))
@@ -141,7 +162,7 @@ bool CQnetDB::UpdatePosition(const char *callsign, const char *maidenhead, doubl
 	if (NULL == db)
 		return false;
 	std::stringstream sql;
-	sql << "UPDATE LHEARD SET maidenhead = '" << maidenhead << "', latitude = " << latitude << ", longitude = " << longitude << ", lasttime = strftime('%s','now') WHERE callsign='" << callsign << "';";
+	sql << "UPDATE LHEARD SET maidenhead = '" << maidenhead << "', latitude = " << latitude << ", longitude = " << longitude << ", lasttime = strftime('%s','now') WHERE callsign='" << callsign << "'; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
 
 	char *eMsg;
 	if (SQLITE_OK != sqlite3_exec(db, sql.str().c_str(), NULL, 0, &eMsg))
@@ -159,7 +180,7 @@ bool CQnetDB::UpdateMessage(const char *callsign, const char *message)
 	if (NULL == db)
 		return false;
 	std::stringstream sql;
-	sql << "UPDATE LHEARD SET message = '" << message << "', lasttime = strftime('%s','now') WHERE callsign='" << callsign << "';";
+	sql << "UPDATE LHEARD SET message = '" << message << "', lasttime = strftime('%s','now') WHERE callsign='" << callsign << "'; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
 
 	char *eMsg;
 	if (SQLITE_OK != sqlite3_exec(db, sql.str().c_str(), NULL, 0, &eMsg))
@@ -177,8 +198,8 @@ bool CQnetDB::UpdateLS(const char *address, const char from_mod, const char *to_
 	if (NULL == db)
 		return false;
 	std::stringstream sql;
-	sql << "INSERT OR REPLACE INTO LINKSTATUS (ip_address, from_mod, to_callsign, to_mod, linked_time) VALUES ('" << address << "', '" << from_mod << "', '" << to_callsign << "', '" << to_mod << "', " << linked_time << ");";
-	printf("%s\n", sql.str().c_str()); // log these updates
+	sql << "INSERT OR REPLACE INTO LINKSTATUS (ip_address, from_mod, to_callsign, to_mod, linked_time) VALUES ('" << address << "', '" << from_mod << "', '" << to_callsign << "', '" << to_mod << "', " << linked_time << "); UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
+
 	char *eMsg;
 	if (SQLITE_OK != sqlite3_exec(db, sql.str().c_str(), NULL, 0, &eMsg))
 	{
@@ -243,7 +264,7 @@ bool CQnetDB::DeleteLS(const char *address)
 	if (NULL == db)
 		return false;
 	std::stringstream sql;
-	sql << "DELETE FROM LINKSTATUS WHERE ip_address=='" << address << "';";
+	sql << "DELETE FROM LINKSTATUS WHERE ip_address=='" << address << "'; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);";
 
 	char *eMsg;
 	if (SQLITE_OK != sqlite3_exec(db, sql.str().c_str(), NULL, 0, &eMsg))
@@ -356,7 +377,7 @@ void CQnetDB::ClearLH()
 
 	char *eMsg;
 
-	if (SQLITE_OK != sqlite3_exec(db, "DELETE FROM LHEARD;", NULL, 0, &eMsg))
+	if (SQLITE_OK != sqlite3_exec(db, "DELETE FROM LHEARD; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);", NULL, 0, &eMsg))
 	{
 		fprintf(stderr, "CQnetDB::ClearLH error: %s\n", eMsg);
 		sqlite3_free(eMsg);
@@ -370,7 +391,7 @@ void CQnetDB::ClearLS()
 
 	char *eMsg;
 
-	if (SQLITE_OK != sqlite3_exec(db, "DELETE FROM LINKSTATUS;", NULL, 0, &eMsg))
+	if (SQLITE_OK != sqlite3_exec(db, "DELETE FROM LINKSTATUS; UPDATE sequence SET seq=MAX(STRFTIME('%s','now'), seq+1);", NULL, 0, &eMsg))
 	{
 		fprintf(stderr, "CQnetDB::ClearLS error: %s\n", eMsg);
 		sqlite3_free(eMsg);

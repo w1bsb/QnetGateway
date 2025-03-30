@@ -1,0 +1,9 @@
+th, td {
+  border: 1px solid #909090;
+  padding-right: 4px;
+  padding-left: 4px;
+}
+
+table {
+  border: 1px solid #909090;
+}
